@@ -36,12 +36,7 @@ def get_gulong_data():
              'load_rating','speed_rating','stock','name','cost','srp', 'promo', 'mp_price',
              'b2b_price' , 'supplier_price_date_updated','product_price_date_updated',
              'supplier_id','sale_tag', 'promo_tag']]
-    # df = df[df.is_model_active==1].rename(columns={'model': 'sku_name',
-    #                                                'pattern' : 'name',
-    #                                                'make' : 'brand',
-    #                                                'section_width':'width', 
-    #                                                'rim_size':'diameter', 
-    #                                                'price' : 'price_gulong'}).reset_index()
+    
     df = df.rename(columns={'model': 'sku_name',
                             'name': 'supplier',
                             'pattern' : 'name',
@@ -70,7 +65,12 @@ def get_gulong_data():
                                                            str(x['speed_rating'])), 
                                                            axis=1)
     df.loc[:, 'base_GP'] = (df.loc[:, 'price_gulong'] - df.loc[:, 'cost']).round(2)
-    df.loc[:, 'promo_GP'] = df.apply(lambda x: config.promo_GP(x['price_gulong'], x['cost'], x['sale_tag'], x['promo_tag']), axis=1)
+    
+    active_promos = pd.read_csv('http://app.redash.licagroup.ph/api/queries/186/results.csv?api_key=8cDSJOq1Vwsc51HdjvAVQP1eQJePT5toNhFQVyzY',
+                                parse_dates = ['promo_start', 'promo_end']).fillna('')
+    
+    #df.loc[:, 'promo_GP'] = df.apply(lambda x: config.promo_GP(x['price_gulong'], x['cost'], x['sale_tag'], x['promo_tag']), axis=1)
+    df[['promo_GP', 'promo_id']] = df.apply(lambda x: config.promo_GP(x, active_promos), axis=1, result_type = 'expand')
     df = df[df.name !='-']
     df.sort_values('product_price_date_updated', ascending = False, inplace = True)
     df.drop_duplicates(subset = ['product_id', 'sku_name', 'cost', 'price_gulong', 'supplier'])
@@ -174,9 +174,7 @@ def compare_load_rating(ref, val):
         #     return np.NaN
         else:
             return np.NaN
-
-
-               
+          
 
 if __name__ == '__main__':
     
@@ -189,7 +187,7 @@ if __name__ == '__main__':
     display_cols = ['sku_name', 'width', 'aspect_ratio', 'diameter',
                     'load_rating', 'speed_rating', 'overall_diameter', 'cost', 
                     'srp', 'price_gulong', 'mp_price', 'b2b_price', 'base_GP',
-                    'promo_GP']
+                    'promo_GP', 'promo_id']
     
     with st.sidebar:
         st.header('Tire Selection')

@@ -7,26 +7,30 @@ Created on Sat Jun 17 16:47:15 2023
 
 import pandas as pd
 import numpy as np
-import re, os, sys
+import re, os
 import time
 from datetime import datetime
 from string import punctuation
 from decimal import Decimal
-from operator import itemgetter
 from fuzzywuzzy import fuzz, process
 
 import bq_functions
+from google.cloud import storage
 import gspread
+from tempfile import TemporaryFile
 
 import matplotlib.colors as mcolors
 
-import json
+import json, joblib
 import doctest # run via doctest.testmod()
 
 ## REQUIREMENTS
-sys.path.append(os.path.dirname(os.path.realpath(__file__)))
-output_path = os.path.abspath(os.path.dirname(__file__))
-os.chdir(output_path) # current working directory
+# sys.path.append(os.path.dirname(os.path.realpath(__file__)))
+# output_path = os.path.abspath(os.path.dirname(__file__))
+# os.chdir(output_path) # current working directory
+# credentials.txt
+# secrets.json
+
 
 platform_gsheet = {'GULONG' : {'url' : 'https://docs.google.com/spreadsheets/d/1mHsdtKhdQkm0wals7wn_A5jOicf1WOBuonXEpF8bW0U/edit#gid=0'
                             },
@@ -151,7 +155,7 @@ def get_best_match(query, match_list):
             return matches[best_index]
         # if no match score is high enough, get match with lowest lev dist
         else:
-            min_lev_dist = 100
+            min_lev_dist = 200
             best_match = np.NaN
             for m in matches:
                 lev_d = lev_dist(query, m)
@@ -220,7 +224,10 @@ def clean_make(x, makes):
         # baseline correct
         x = str(x).strip().upper()
         # check main brands list
-        matches = process.extractBests(x, makes_list, score_cutoff = search_thresh)
+        matches = process.extractBests(x, 
+                                       makes_list, 
+                                       scorer = fuzz.partial_token_set_ratio,
+                                       score_cutoff = search_thresh)
         # check if any exact match with brands
         try:
             ## if exact match with brand names, skip alias check
@@ -236,10 +243,14 @@ def clean_make(x, makes):
 
         finally:
             try:
-                best_match = max(matches, key = itemgetter(1))[0].strip().upper()
-                
+                #best_match = max(matches, key = itemgetter(1))[0].strip().upper()
+                best_match = get_best_match(x, matches)
+            
             except:
-                best_match = np.NaN
+                if 'HTTPS://' in x:
+                    best_match = np.NaN
+                else:
+                    best_match = x
             
             finally:
                 return best_match
@@ -259,7 +270,7 @@ def import_models(platform, makes = None):
         makes = import_makes(platform)
         
     models_sh_list = []
-    for make in makes.name:
+    for make in makes.iloc[:, 0]:
         time.sleep(1.75) # reduce failed imports due to timeout
         try:
             models_df = read_gsheet(platform_gsheet[platform]['url'], 
@@ -273,6 +284,8 @@ def import_models(platform, makes = None):
 
     df = pd.concat(models_sh_list, axis=0, ignore_index = True)
     df.columns = ['_'.join(c.strip().lower().split(' ')) for c in df.columns]
+    df = df.astype(str)
+    df.loc[:, 'date_updated'] = pd.to_datetime(datetime.today().date())
     return df
 
 
@@ -290,14 +303,24 @@ def clean_model(model, makes, models):
     -------
     cleaned model string
     
-    >>> clean_models('2015 MITSUBISHI ASX GLS AT', carmax_makes, carmax_models)
+    >>> clean_model('2015 MITSUBISHI ASX GLS AT', carmax_makes, carmax_models)
     'ASX'
-    >>> clean_models('2022 Peugeot 2008 1.2 THP Allure AT', carmax_makes, carmax_models)
+    >>> clean_model('2022 Peugeot 2008 1.2 THP Allure AT', carmax_makes, carmax_models)
     '2008'
-    >>> clean_models('2017 BMW X3 AT Diesel', carmax_makes, carmax_models)
+    >>> clean_model('2017 BMW X3 AT Diesel', carmax_makes, carmax_models)
     'X3'
-    >>> clean_models('2015 Toyota Vios 1.3 E MT Gasoline', carmax_makes, carmax_models)
+    >>> clean_model('2015 Toyota Vios 1.3 E MT Gasoline', carmax_makes, carmax_models)
     'VIOS'
+    >>> clean_model('HTTPS://WWW.TSIKOT.COM/HONDA-FIT-2003-311', carmax_makes, carmax_models)
+    'FIT'
+    >>> clean_model('HTTPS://USEDCARSPHIL.COM//TOYOTA-HIACE-4-5-DSL-AT-WHITE-PEARL-FOR-SALE-IN-QUEZON-CITY/2018-GL-GRANDIA-30-AT-2-TONE-IN-METRO-MANILA-AID383891', carmax_makes, carmax_models)
+    'HIACE'
+    >>> clean_model('TOWNACE', carmax_makes, carmax_models)
+    'TOWNACE'
+    >>> clean_model('T-CROSS', carmax_makes, carmax_models)
+    'T-CROSS'
+    >>> clean_model('ACE BATA', carmax_makes, carmax_models)
+    'ACE BATA'
     '''
     
     def flatten(l):
@@ -313,9 +336,12 @@ def clean_model(model, makes, models):
     exact_thresh = 95 # for MORRIS GARAGES
     
     if pd.notna(model) and (model is not None):
-        model = re.sub('[(\t)(\n)]', ' ', model.upper().strip())
+        model = re.sub('[(\t)(\n)]', ' ', str(model).upper().strip()).split('.COM//')[-1]
         
-        brand_matches = process.extractBests(model, makes_list, score_cutoff = search_thresh)
+        brand_matches = process.extractBests(model, 
+                                             makes_list, 
+                                             scorer = fuzz.partial_token_set_ratio,
+                                             score_cutoff = search_thresh)
         # check if any exact match with brands
         try:
             ## if exact match with brand names, skip alias check
@@ -325,14 +351,20 @@ def clean_model(model, makes, models):
                 ## proceed to alias check
                raise Exception('Exact match not found in makes list')
         except:       
-            alias_matches = process.extractBests(model, makes_alias_list, score_cutoff = search_thresh)
+            alias_matches = process.extractBests(model, makes_alias_list, 
+                                                 scorer = fuzz.partial_token_set_ratio,
+                                                 score_cutoff = search_thresh)
             # get original brand of matched alias
             brand_matches += [(makes_[makes_.iloc[:, 1].str.contains(n[0])].iloc[:,0].values[0], n[1]) for n in alias_matches if n[1] >= search_thresh]        
         
         #best_brand_match = max(brand_matches, key = itemgetter(1))[0].strip().upper()
         best_brand_match = get_best_match(model, brand_matches)
         
-        if best_brand_match:
+        # print ('best_brand_match: {}, model: {}'.format(best_brand_match, model))
+        # model = str(model).split(best_brand_match)[-1].split('//')[0]
+        
+        if pd.notna(best_brand_match) and (best_brand_match is not None):
+            model = str(model).split(best_brand_match)[-1].split('//')[0]
             models_ = models[models.make.str.upper() == best_brand_match].fillna('')
         else:
             models_ = models.fillna('').copy()
@@ -348,7 +380,9 @@ def clean_model(model, makes, models):
             return model
             
         ## fuzzy search for model from filtered model list
-        model_matches = process.extractBests(model, models_list, score_cutoff = search_thresh)
+        model_matches = process.extractBests(model, models_list, 
+                                             scorer = fuzz.WRatio, 
+                                             score_cutoff = search_thresh)
         
         try:
             ## if exact match with brand names, skip alias check
@@ -369,15 +403,22 @@ def clean_model(model, makes, models):
                 best_match = get_best_match(model, model_matches)
                 ## if brand was found, remove brand from result
                 if pd.notna(best_match):
-                    if best_brand_match:
+                    if pd.notna(best_brand_match):
                         best_match = re.sub(best_brand_match, '', best_match).strip()
                     else:
-                        pass
+                        best_brand_match = get_best_match(process.extractOne(best_match, makes_list))
+                        if pd.notna(best_brand_match):
+                            best_match = re.sub(best_brand_match, '', best_match).strip()
+                        else:
+                            pass
                 else:
                     raise Exception('Match not found.')
                 
             except:
-                best_match = np.NaN
+                if 'HTTPS://' in model:
+                    best_match = np.NaN
+                else:
+                    best_match = model
             
             finally:
                 return best_match
@@ -418,13 +459,16 @@ def clean_body_type(x, body_types):
     body.iloc[:, 1] = body.iloc[:, 1].str.upper()
     alias_list = flatten([i.split(', ') for i in body.iloc[:, 1].value_counts().index])
     
+    search_thresh = 85
+    
     if pd.notna(x):
         # baseline correction
         x = str(x).strip().upper()
         
         # check main brands list
         best_matches = []
-        best_matches += [n for n in process.extractBests(x, body_list) if n[1] >= 85]
+        #best_matches += [n for n in process.extractBests(x, body_list) if n[1] >= 85]
+        best_matches += process.extractBests(x, body_list, score_cutoff = search_thresh)
         
         # check if any exact match with brands
         try:
@@ -434,16 +478,17 @@ def clean_body_type(x, body_types):
                raise Exception('Exact match not found in makes list')
                
         except:       
-            alias_matches = process.extractBests(x, alias_list)
+            alias_matches = process.extractBests(x, alias_list, score_cutoff = search_thresh)
             # get original brand of matched alias
-            best_matches += [(body[body.iloc[:, 1].str.contains(n[0])].iloc[:,0].values[0], n[1]) for n in alias_matches if n[1] >= 85]
+            best_matches += [(body[body.iloc[:, 1].str.contains(n[0])].iloc[:,0].values[0], n[1]) for n in alias_matches]
 
         finally:
             try:
-                best_match = max(best_matches, key = itemgetter(1))[0].strip().upper()
+                #best_match = max(best_matches, key = itemgetter(1))[0].strip().upper()
+                best_match = get_best_match(x, best_matches)
                 
             except:
-                best_match = np.NaN
+                best_match = x
             
             finally:
                 return best_match        
@@ -470,6 +515,10 @@ def clean_color(c, colors):
     Cleans color value string of carmax entries
     
     See import_colors
+    
+    Parameters
+    ----------
+    colors : list
     '''
     # returns '' if NaN
     if pd.notna(c):
@@ -512,7 +561,7 @@ def clean_location(loc, ph_loc, prov = None):
         else:
             city_match_list = []
             for l in loc.split(', '):
-                bests = process.extractBests(l, ph_loc.city)
+                bests = process.extractBests(l, ph_loc.city.tolist())
                 for b in bests:
                     if b[1] >= 75:
                         city_match_list.append(b)
@@ -525,7 +574,7 @@ def clean_location(loc, ph_loc, prov = None):
         
         if pd.notna(city_match):
             if prov is not None:
-                prov_match = process.extractOne(prov, ph_loc.province)[0]
+                prov_match = process.extractOne(prov, ph_loc.province.tolist())[0]
             else:
                 prov_match = ph_loc[ph_loc.city == city_match]['province'].iloc[0]
                 
@@ -535,7 +584,7 @@ def clean_location(loc, ph_loc, prov = None):
             if prov is not None:
                 prov_match = process.extractOne(prov, ph_loc.province)[0]
             else:
-                fuzzy_prov_match = process.extractBests(loc, ph_loc.province)
+                fuzzy_prov_match = process.extractBests(loc, ph_loc.province.tolist())
                 prov_match_list = [f for f in fuzzy_prov_match if f[1] >= 80]
                 prov_match = get_best_match(loc, prov_match_list)
             
@@ -543,25 +592,63 @@ def clean_location(loc, ph_loc, prov = None):
                 region_match = ph_loc[ph_loc.province == prov_match]['region'].iloc[0]
             
             else:
-                fuzzy_region_match = process.extractBests(loc, ph_loc.region)
+                fuzzy_region_match = process.extractBests(loc, ph_loc.region.tolist())
                 region_match_list = [f for f in fuzzy_region_match if f[1] >= 85]
                 region_match = get_best_match(loc, region_match_list)
         
         return city_match, prov_match, region_match
 
-def clean_year(x):
+def clean_address(address, lev_dist_tol = 3):
+    '''
+    Cleans address string of carmax financing data with help from levenshtein distance calc
+    '''
+    if pd.isna(address):
+        return np.NaN
+    else:
+        # baseline correction
+        address = address.upper().strip()
+        # list of unique cities list
+        cities_list = ph_locations[ph_locations.province == 'Metro Manila']['city'].str.upper().tolist()
+        if any(re.search((match := city), address) for city in cities_list):
+            return f'{match} CITY, METRO MANILA, PHILIPPINES'
+        elif re.search('Q(UEZON)?.*C(ITY)?', address):
+            return 'QUEZON CITY, METRO MANILA, PHILIPPINES'
+        # no exact matches found, use levenshtein dist
+        else:
+            # calculate lev dist for each word in address comparing to each city value
+            # if lev dist passes tolerance value, pick match
+            dist_list = [city for city in cities_list for a in address.split(' ') if lev_dist(a, city) <= lev_dist_tol]
+            if dist_list:
+                return f'{dist_list[0]} CITY, METRO MANILA, PHILIPPINES'
+            # no city passes lev tolerance, move to province list and repeat process
+            else:
+                provinces_list = ph_locations[ph_locations.province != 'Metro Manila']['city'].str.upper().tolist()
+                if any(re.search((match := prov), address) for prov in provinces_list):
+                    return f'{match}, PHILIPPINES'
+                else:
+                    dist_list = [prov for prov in provinces_list for a in address.split(' ') if lev_dist(a, prov) <= lev_dist_tol]
+                    if dist_list:
+                        return f'{dist_list[0]}, PHILIPPINES'
+                    else:
+                        return address
+
+def clean_year(x: str) -> (str, np.NaN):
     '''
     Finds the year in a string value
     '''
     if pd.isna(x):
-        return x
+        return np.NaN
     else:
         x = str(x).strip().upper()
-        x = re.search('(19|20)[0-9]{2}', x)
-        if x:
-            return x[0]
+        search = re.search('(19|20)[0-9]{2}', x)
+        if search:
+            return search[0]
+        elif (float(x) >= 50):
+            return '19'+ str(int(float(x)))
+        elif (float(x) == 0):
+            return '2000'
         else:
-            return np.NaN
+            return x
 
 def clean_price(x):
     '''
@@ -702,7 +789,7 @@ def clean_fuel_type(x, description = None):
             if (description is not None):
                 return regex_fuel(description)
             else:
-                raise Exception
+                raise np.NaN
         except:
             return np.NaN
     else:
@@ -909,58 +996,58 @@ def fix_names(sku_name, comp=None):
     '''
     
     # replacement should be all caps
-    change_name_dict = {'TRANSIT.*ARZ.?6-X' : 'TRANSITO ARZ6-X',
-                        'TRANSIT.*ARZ.?6-A' : 'TRANSITO ARZ6-A',
-                        'TRANSIT.*ARZ.?6-M' : 'TRANSITO ARZ6-M',
-                        'OPA25': 'OPEN COUNTRY A25',
-                        'OPA28': 'OPEN COUNTRY A28',
-                        'OPA32': 'OPEN COUNTRY A32',
-                        'OPA33': 'OPEN COUNTRY A33',
-                        'OPAT\+': 'OPEN COUNTRY AT PLUS', 
-                        'OPAT2': 'OPEN COUNTRY AT 2',
-                        'OPMT2': 'OPEN COUNTRY MT 2',
-                        'OPAT OPMT': 'OPEN COUNTRY AT',
-                        'OPAT': 'OPEN COUNTRY AT',
-                        'OPMT': 'OPEN COUNTRY MT',
-                        'OPRT': 'OPEN COUNTRY RT',
-                        'OPUT': 'OPEN COUNTRY UT',
-                        'DC -80': 'DC-80',
-                        'DC -80+': 'DC-80+',
-                        'KM3': 'MUD-TERRAIN T/A KM3',
-                        'KO2': 'ALL-TERRAIN T/A KO2',
-                        'TRAIL-TERRAIN T/A' : 'TRAIL-TERRAIN',
+    change_name_dict = {'TRANSIT.*ARZ.?6-X' : 'TRANSITO ARZ6-X', #ARIVO
+                        'TRANSIT.*ARZ.?6-A' : 'TRANSITO ARZ6-A', #ARIVO
+                        'TRANSIT.*ARZ.?6-M' : 'TRANSITO ARZ6-M', #ARIVO
+                        'OPA25': 'OPEN COUNTRY A25', # TOYO
+                        'OPA28': 'OPEN COUNTRY A28', # TOYO
+                        'OPA32': 'OPEN COUNTRY A32', # TOYO
+                        'OPA33': 'OPEN COUNTRY A33', # TOYO
+                        'OPAT\+': 'OPEN COUNTRY AT PLUS',# TOYO
+                        'OPAT2': 'OPEN COUNTRY AT 2', # TOYO
+                        'OPMT2': 'OPEN COUNTRY MT 2', # TOYO
+                        'OPAT OPMT': 'OPEN COUNTRY AT', # TOYO
+                        'OPAT': 'OPEN COUNTRY AT', # TOYO
+                        'OPMT': 'OPEN COUNTRY MT', # TOYO
+                        'OPRT': 'OPEN COUNTRY RT', # TOYO
+                        'OPUT': 'OPEN COUNTRY UT', # TOYO
+                        'DC -80': 'DC-80', #DOUBLECOIN
+                        'DC -80+': 'DC-80+', #DOUBLECOIN
+                        'KM3': 'MUD-TERRAIN T/A KM3', # BFGOODRICH
+                        'KO2': 'ALL-TERRAIN T/A KO2', # BFGOODRICH
+                        'TRAIL-TERRAIN T/A' : 'TRAIL-TERRAIN', # BFGOODRICH
                         '265/70/R16 GEOLANDAR 112S': 'GEOLANDAR A/T G015',
                         '265/65/R17 GEOLANDAR 112S' : 'GEOLANDAR A/T G015',
                         '265/65/R17 GEOLANDAR 112H' : 'GEOLANDAR G902',
                         'GEOLANDAR A/T 102S': 'GEOLANDAR A/T-S G012',
                         'GEOLANDAR A/T': 'GEOLANDAR A/T G015',
-                        'ASSURACE MAXGUARD SUV': 'ASSURANCE MAXGUARD SUV',
-                        'EFFICIENTGRIP SUV': 'EFFICIENTGRIP SUV',
-                        'EFFICIENGRIP PERFORMANCE SUV':'EFFICIENTGRIP PERFORMANCE SUV',
-                        'WRANGLE DURATRAC': 'WRANGLER DURATRAC',
-                        'WRANGLE AT ADVENTURE': 'WRANGLER AT ADVENTURE',
-                        'WRANGLER AT ADVENTURE': 'WRANGLER AT ADVENTURE',
-                        'WRANGLER AT SILENT TRAC': 'WRANGLER AT SILENTTRAC',
-                        'ENASAVE  EC300+': 'ENSAVE EC300 PLUS',
+                        'ASSURACE MAXGUARD SUV': 'ASSURANCE MAXGUARD SUV', #GOODYEAR
+                        'EFFICIENTGRIP SUV': 'EFFICIENTGRIP SUV', #GOODYEAR
+                        'EFFICIENGRIP PERFORMANCE SUV':'EFFICIENTGRIP PERFORMANCE SUV', #GOODYEAR
+                        'WRANGLE DURATRAC': 'WRANGLER DURATRAC', #GOODYEAR
+                        'WRANGLE AT ADVENTURE': 'WRANGLER AT ADVENTURE', #GOODYEAR
+                        'WRANGLER AT ADVENTURE': 'WRANGLER AT ADVENTURE', #GOODYEAR
+                        'WRANGLER AT SILENT TRAC': 'WRANGLER AT SILENTTRAC', #GOODYEAR
+                        'ENASAVE EC300+': 'ENSAVE EC300 PLUS', #DUNLOP
                         'SAHARA AT2' : 'SAHARA AT 2',
                         'SAHARA MT2' : 'SAHARA MT 2',
-                        'WRANGLER AT SILENT TRAC': 'WRANGLER AT SILENTTRAC',
-                        'POTENZA RE003 ADREANALIN': 'POTENZA RE003 ADRENALIN',
-                        'POTENZA RE004': 'POTENZA RE004',
-                        'SPORT MAXX 050' : 'SPORT MAXX 050',
-                        'DUELER H/T 470': 'DUELER H/T 470',
-                        'DUELER H/T 687': 'DUELER H/T 687 RBT',
-                        'DUELER A/T 697': 'DUELER A/T 697',
-                        'DUELER A/T 693': 'DUELER A/T 693 RBT',
-                        'DUELER H/T 840' : 'DUELER H/T 840 RBT',
-                        'EVOLUTION MT': 'EVOLUTION M/T',
-                        'BLUEARTH AE61' : 'BLUEARTH XT AE61',
-                        'BLUEARTH ES32' : 'BLUEARTH ES ES32',
-                        'BLUEARTH AE51': 'BLUEARTH GT AE51',
+                        'POTENZA RE003 ADREANALIN': 'POTENZA RE003 ADRENALIN', #BRIDGESTONE
+                        'POTENZA RE004': 'POTENZA RE004', #BRIDGESTONE
+                        'SPORT MAXX 050' : 'SPORT MAXX 050', #DUNLOP
+                        'DUELER H/T 470': 'DUELER H/T 470', # BRIDGESTONE
+                        'DUELER H/T 687': 'DUELER H/T 687 RBT', # BRIDGESTONE
+                        'DUELER A/T 697': 'DUELER A/T 697', # BRIDGESTONE
+                        'DUELER A/T 693': 'DUELER A/T 693 RBT', # BRIDGESTONE
+                        'DUELER H/T 840' : 'DUELER H/T 840 RBT', # BRIDGESTONE
+                        'EVOLUTION MT': 'EVOLUTION M/T', #COOPER
+                        'BLUEARTH AE61' : 'BLUEARTH XT AE61', #YOKOHAMA
+                        'BLUEARTH ES32' : 'BLUEARTH ES ES32', #YOKOHAMA
+                        'BLUEARTH AE51': 'BLUEARTH GT AE51', #YOKOHAMA
                         'COOPER STT PRO': 'STT PRO',
                         'COOPER AT3 LT' : 'AT3 LT',
                         'COOPER AT3 XLT' : 'AT3 XLT',
                         'A/T3' : 'AT3',
+                        'ENERGY XM2' : 'ENERGY XM2',
                         'ENERGY XM+' : 'ENERGY XM2+',
                         'XM2+' : 'ENERGY XM2+',
                         'AT3 XLT': 'AT3 XLT',
@@ -1227,31 +1314,52 @@ def combine_sku(make, w, ar, d, model, load, speed):
     else:
         return ' '.join([make, specs, model, load + speed])
 
-def promo_GP(price, cost, sale_tag, promo_tag):
-    '''
-    price : float
-        price_gulong price
-    cost : float
-        supplier cost price
-    sale_tag : binary
-        buy 4 tires 3% off per tire
-    promo_tag : binary
-        buy 3 tires get 1 free
-        
-    DOCTESTS:
-    >>> promo_GP(4620, 3053.65, 1, 0)
-    5711
-    >>> promo_GP(5040, 3218.4, 0, 1)
-    2246.4
-        
-    '''
+def promo_GP(row, active_promos):
+
+    ## TODO : Create func to identify type of calculation for GP       
+    promo_type = {0 : lambda p, c: (p*0.97 - c)*4, #clearance/sale
+                  1 : lambda p, c : p - c, #WHEELALIGNMENT
+                  2 : lambda p, c : 3*p + 33 - c * 4, #33 PHP
+                  3 : lambda p, c : p - c, #'SPARE TIRE'
+                  4 : lambda p, c : p * 3 - c * 4, #'3+1',
+                  5 : lambda p, c : (p - c) * 4 - 1000, #'1000OFF',
+                  6 : lambda p, c : p * 3.5 - c * 4, #'50%OFF',
+                  7 : lambda p, c : 3*p + 3 - c * 4#'3 PHP'
+                  }
+    
     # sale tag : buy 4 tires 3% off per tire
-    # promo tag: buy 3 tires get 1 free
-    if sale_tag:
-        gp = (price * 0.97 - cost) * 4
+    if (row['sale_tag'] == 1) and (row['promo_tag'] == 0):
+        gp = (row['price_gulong'] * 0.97 - row['cost']) * 4
+        promo_id = 0
+        
+    elif (row['sale_tag'] == 0) and (row['promo_tag'] == 1):
+        brands_match = []
+        for m in active_promos['brand']:
+            if row['brand'] in str(m):
+                if row['brand'] == str(m):
+                    brands_match = [str(m)]
+                    break
+                else:
+                    brands_match.append(m)
+            else:
+                pass
+        
+        try:
+            brand_match = min(brands_match, key = len)
+            promo_id = active_promos[active_promos['brand']==brand_match]['promo_duration_id'].iloc[0]
+        except:
+            promo_id = np.NaN
+
+        
+        if pd.notna(promo_id):
+            gp = promo_type[promo_id](row['price_gulong'], row['cost'])
+        else:
+            gp = row['price_gulong'] - row['cost']
     else:
-        gp = (price * 3 - cost * 4)
-    return round(gp, 2)
+        gp = (row['price_gulong'] - row['cost'])
+        promo_id = -1
+        
+    return round(gp, 2), promo_id
 
 def calc_overall_diameter(specs):
     '''
@@ -1293,6 +1401,10 @@ def calc_overall_diameter(specs):
 
 def get_car_compatible():
     
+    ## TODO: Import scraped data from wheel-size
+    ## TODO: Clean car makes, model, width, aspect ratio, diameter, correct specs
+    ## TODO: Write to BQ - 'absolute-gantry-363408.gulong.product_tire_compatible'
+    
     # http://app.redash.licagroup.ph/queries/183
     # GULONG - Car Compatible Tire Sizes
     def import_data():
@@ -1327,81 +1439,123 @@ def get_car_compatible():
 
 ## END OF GULONG FUNCTIONS ==================================================##
 
-def clean_df(df):
+def clean_df(df, platform = 'CARMAX'):
+    
+    data = df.copy()
+    
+    if platform == 'CARMAX':
+        
+        # check import reference data presence
+        global_data = ['carmax_makes', 'carmax_models', 'body_types', 'ph_locations']
+        if all(True if d in globals() else False for d in global_data):
+            pass
+        else:
+            main(platform, 'CLEAN')
+        
+        # start cleaning process
+        print(f"Cleaning date_listed: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'date_listed'] = pd.to_datetime(data.loc[:, 'date_listed'])
+        
+        print(f"Cleaning make: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'make'] = data.apply(lambda x: clean_make(x['make'], carmax_makes)
+                                     if pd.notna(x['make']) else clean_make(x['url'], carmax_makes), axis=1)
+        
+        print(f"Cleaning model: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'model'] = data.apply(lambda x: clean_model(x['model'], carmax_makes, carmax_models) 
+                                      if pd.notna(x['model']) else clean_model(x['url'], carmax_makes, carmax_models), axis=1)
+        
 
-#     try:
-#         temp = df[df.date.notna()]
-#         temp.loc[:, 'date'] = temp.date.dt.date
-#         df = pd.concat([df[df.date.isnull()], temp], axis = 0).sort_values('date', 
-#                                                                            ascending = False)\
-#                                                                 .reset_index(drop = True)
-#     except:
-#         pass
-    
-#     df.loc[:, 'model'] = df.apply(lambda x: clean_models(x['model'], makes_list, models_list) 
-#                                   if pd.notna(x['model']) else clean_model(x['url'], makes_list, models_list), axis=1)
-    
-#     df.loc[:, 'make'] = df.apply(lambda x: clean_makes(x['make'], makes_list)
-#                                  if pd.notna(x['make']) else clean_makes(x['url'], makes_list), axis=1)
-    
-#     df = df[df.model.notna()]
-    
-#     # year
-#     df = df[df.year.notna()]
-#     df.loc[:, 'year'] = df.apply(lambda x: int(clean_year(x['year'])), axis=1)
-#     df = df[df.year.between(2000, datetime.today().year - 1)]
-    
-#     # transmission
-#     df.loc[:, 'transmission'] = df.apply(lambda x: clean_transmission(x['transmission'], variant = ' '.join(x['url'].split('-')).upper()), axis=1)
-#     df = df[df.transmission.isin(['AUTOMATIC', 'MANUAL'])]
-    
-#     # mileage
-#     df.loc[:, 'mileage'] = df.apply(lambda x: clean_mileage(x['mileage'], description = x['description']), axis=1)
-#     ## mileage outlier removal per year
-#     mileage_q = df.groupby('year')['mileage'].describe().loc[:, ['25%', '50%', '75%']]
-#     mileage_q.loc[:,'IQR'] = (mileage_q.loc[:,'75%'] - mileage_q.loc[:, '25%'])
-#     mileage_q.loc[:, 'upper'] = mileage_q.loc[:, '75%'] + 1.5*mileage_q.loc[:,'IQR']
-#     df.loc[:, 'mileage_check'] = df.apply(lambda x: 1 if x['mileage'] <= mileage_q.loc[x['year'], 'upper'] else 0, axis=1)
-#     df = df[(df.mileage_check == 1) & (df.mileage >= 3000)]
-    
-#     # fuel_type
-#     df.loc[:, 'fuel_type'] = df.apply(lambda x: clean_fuel_type(x['fuel_type'], description = x['description']), axis=1)
-#     df = df[df.fuel_type.isin(['GASOLINE', 'DIESEL'])]
-    
-#     # price
-#     df.loc[:, 'price'] = df.apply(lambda x: clean_price(x['price']), axis=1)
-#     df = df[df.price <= 2000000]
-    
-#     price_q = df.groupby('year')['price'].describe().loc[:, ['25%', '50%', '75%']]
-#     price_q.loc[:, 'IQR'] = (price_q.loc[:, '75%'] - price_q.loc[:, '25%'])
-#     price_q.loc[:, 'upper'] = price_q.loc[:, '75%'] + 1.5*price_q.loc[:, 'IQR']
-#     df.loc[:, 'price_check'] = df.apply(lambda x: 1 if x['price'] <= price_q.loc[x['year'], 'upper'] else 0, axis=1)
-#     df = df[(df.price_check == 1) & (df.price >= 50000)]
-    
-#     # num_photos
-#     df.loc[:, 'num_photos'] = df.num_photos.apply(int)
-    
-#     # body_type
-#     df.loc[:, 'body_type'] = df.body_type.apply(lambda x: clean_body_type(x, body_types))
-#     df = df[df.body_type.isin(['SUV', 'SEDAN', 'HATCHBACK', 'PICKUP TRUCK', 'VAN'])]
-    
-#     # location
-#     df['city'], df['province'], df['region'] = zip(*df.location.apply(lambda x: clean_location(x, ph_locations)))
-    
-#     # remove duplicates
-#     df = df.drop_duplicates(subset  = ['make', 'model', 'year', 'mileage', 
-#                                        'transmission'],
-#                             keep = 'first')
-#     # remove na
-#     df = df.dropna(subset  = ['make', 'model', 'year', 'mileage', 
-#                                        'transmission']).reset_index(drop = True)
-    
-#     df = df.drop(['mileage_check', 'price_check', 'description', 'location'], axis=1)
-#     df = df.rename(columns = {'date': 'date_posted'})
-    
-    return df
+        print(f"Cleaning year: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'year'] = data.apply(lambda x: clean_year(x['year']), axis=1)
+        #data.loc[:, 'year'] = data[~data.year.isnull()]['year'].astype(int)
+        
+        print(f"Cleaning mileage: {datetime.now().time().strftime('%H:%M:%S')}")
+        try:
+            data.loc[:, 'mileage'] = data.apply(lambda x: clean_mileage(x['mileage'], description = x['description']), axis=1)
+        except:
+            data.loc[:, 'mileage'] = data.apply(lambda x: clean_mileage(x['mileage']), axis=1)
+        
+        
+        print(f"Cleaning fuel_type: {datetime.now().time().strftime('%H:%M:%S')}")
+        try:
+            data.loc[:, 'fuel_type'] = data.apply(lambda x: clean_fuel_type(x['fuel_type'], description = x['description']), axis=1)
+        except:
+            data.loc[:, 'fuel_type'] = data.apply(lambda x: clean_fuel_type(x['fuel_type']), axis=1)
+        
+        #data = data[data.fuel_type.isin(['GASOLINE', 'DIESEL'])]
+        
+        print(f"Cleaning transmission: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'transmission'] = data.apply(lambda x: clean_transmission(x['transmission']), axis=1)
+        
+        #data = data[data.transmission.isin(['AUTOMATIC', 'MANUAL'])]
+        
+        print(f"Cleaning price: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'price'] = data.apply(lambda x: clean_price(x['price']), axis=1)
 
-def prep_competitor_data(platform):
+        print(f"Cleaning body_type: {datetime.now().time().strftime('%H:%M:%S')}")
+        def get_body_type(make : str, 
+                          model : str) -> [str, np.NaN]:
+            #print ('make: {0}, model: {1}'.format(make, model))
+            sim = data[(data.make == make) & (data.model == model)]
+            try:
+                return sim['body_type'].mode().iloc[0]
+            except:
+                return np.NaN
+        
+        #data.loc[:, 'body_type'] = data.apply(lambda x: get_body_type(x['make'], x['model']), axis=1)
+        data.loc[:, 'body_type'] = data.apply(lambda x: clean_body_type(x['body_type'], body_types), axis=1)
+        data.loc[data['body_type'].isnull(), 'body_type'] = data.loc[data['body_type'].isnull(), :].apply(lambda x: get_body_type(x['make'], x['model']), axis=1)
+        
+        # print(f"Cleaning location: {datetime.now().time().strftime('%H:%M:%S')}")
+        # data['city'], data['province'], data['region'] = zip(*data.location.apply(lambda x: clean_location(x, ph_locations)))
+            
+        print(f"Cleaning address: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'location'] = data.location.apply(lambda x: clean_address(x)) 
+        
+        dropna_cols = ['make', 'model', 'year', 'price', 'mileage',
+                       'transmission', 'fuel_type', 'body_type']
+        data = data.dropna(subset=dropna_cols).reset_index(drop = True)
+
+    else:
+
+        data = data.rename(columns={'model': 'sku_name',
+                                'name': 'supplier',
+                                'pattern' : 'name',
+                                'make' : 'brand',
+                                'section_width':'width', 
+                                'rim_size':'diameter', 
+                                'promo' : 'price_gulong'}).reset_index(drop = True)
+     
+        print(f"Cleaning width: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'width'] = data.apply(lambda x: clean_width(x['width']), axis=1)
+        print(f"Cleaning aspect_ratio: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'aspect_ratio'] = data.apply(lambda x: clean_aspect_ratio(x['aspect_ratio']), axis=1)    
+        print(f"Cleaning diameter: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'diameter'] = data.apply(lambda x: clean_diameter(x['diameter']), axis=1)
+        print(f"Cleaning raw_specs: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'raw_specs'] = data.apply(lambda x: combine_specs(x['width'], x['aspect_ratio'], x['diameter'], mode = 'SKU'), axis=1)
+        print(f"Cleaning correct_specs: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'correct_specs'] = data.apply(lambda x: combine_specs(x['width'], x['aspect_ratio'], x['diameter'], mode = 'MATCH'), axis=1)
+        print(f"Calculating overall_diameter: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'overall_diameter'] = data.apply(lambda x: calc_overall_diameter(x['correct_specs']), axis=1)
+        print(f"Cleaning name: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'name'] = data.apply(lambda x: fix_names(x['name']), axis=1)
+        print(f"Cleaning sku_name: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'sku_name'] = data.apply(lambda x: combine_sku(str(x['brand']), 
+                                                               str(x['width']),
+                                                               str(x['aspect_ratio']),
+                                                               str(x['diameter']),
+                                                               str(x['name']), 
+                                                               str(x['load_rating']), 
+                                                               str(x['speed_rating'])), 
+                                                               axis=1)
+        print(f"Clalculating GP: {datetime.now().time().strftime('%H:%M:%S')}")
+        data.loc[:, 'base_GP'] = (data.loc[:, 'price_gulong'] - data.loc[:, 'cost']).round(2)
+        data.loc[:, 'promo_GP'] = data.apply(lambda x: promo_GP(x['price_gulong'], x['cost'], x['sale_tag'], x['promo_tag']), axis=1)
+    
+    return data
+
+def prep_competitor_data(platform = 'CARMAX'):
     
     '''
     Imports competitor data from BQ and performs data cleaning
@@ -1409,36 +1563,135 @@ def prep_competitor_data(platform):
     '''
     
     ## get GCP BQ credentials
-    with open('secrets.json') as s:
-        acct = json.load(s)
+    acct = bq_functions.get_acct()
     
     ## load BQ client
     client, credentials = bq_functions.authenticate_bq(acct)
     project_id = credentials.project_id
     
-    ## TODO : Query carmax competitor raw data from BQ
     if platform is not None:
         ## Carmax
         if platform.upper() == 'CARMAX':
             
-            competitor_list = ['autodeal', 'tsikot', 'philkotse', 'usedcarsphil']
-            df = pd.concat([bq_functions.query_bq('.'.join([project_id, 'carmax', c]), client) 
-                            for c in competitor_list])
+            try:
+                print('Concatenating all competitor raw data')
+                competitor_list = ['autodeal', 'carsada', 'tsikot', 'philkotse', 'usedcarsphil']
+                df = pd.concat([bq_functions.query_bq('.'.join([project_id, 'carmax', f'competitor_{c}_raw']), client) 
+                                for c in competitor_list])
+            except:
+                raise Exception('Concatenating data failed.')
+                
+            try:
+                df_clean = clean_df(df, platform = 'CARMAX')
             
-            ## TODO : Clean competitor data
-            df_clean = clean_df(df)
-            
-            ## TODO : Write cleaned data to BQ/GCS
-            bq_functions.bq_write(df_clean, credentials, 'carmax', 'competitor_data', client)
-            
+            except:
+                raise Exception('Cleaning data failed.')
+                
+            try:
+                bq_functions.bq_write(df_clean, credentials, 'carmax', 'competitors_compiled', client)
+                
+            except:
+                ## attempt upload to GCS
+                try:
+                    print ('Upload to BQ unsucessful. Attempting upload to GCS.')
+                    upload_to_gcloud(df_clean, )
+                    print ('Upload to GCS successful.')
+                    
+                except:
+                    raise Exception('Upload to GCS unsuccessful.')
+                
+                raise Exception('Writing to BigQuery failed.')
         else:
             ## Gulong
             pass
         
         return df_clean
     
+    else:
+        raise Exception('Dataframe empty.')
     
+
+def upload_to_gcloud(obj, file, bucket_name = 'carmax-competitors'):
+    """
+    this function take a dictionary as input and uploads
+    it in a google cloud storage bucket
+    """          
     
+    service_account = '\\secrets.json'
+    
+    ## your service-account credentials as JSON file
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.getcwd() + service_account
+    
+    ## instane of the storage client
+    storage_client = storage.Client()
+    
+    ## instance of a bucket in your google cloud storage
+    bucket = storage_client.get_bucket(bucket_name)
+    
+    ## instance of file object as csv
+    blob = bucket.blob(file)
+    
+    if '.csv' in file:
+        ## upload file from dataframe
+        try:
+            blob.upload_from_string(obj.to_csv(index = False), 'text/csv')
+        except:
+            raise Exception('Uploading dataframe to GCS failed.')
+    elif '.joblib' in file:
+        try:
+            joblib.dump(obj, file)
+            blob.upload_from_filename(file)
+        except:
+            raise Exception('Uploading model to GCS failed.')
+
+def check_model_date(file : str, 
+                     bucket_name : str = 'lica-aiml-models'):
+    # 'carmax/appraisal_xgb_model.joblib'
+    
+    service_account = '\\secrets.json'
+    
+    ## your service-account credentials as JSON file
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.getcwd() + service_account
+    
+    ## instane of the storage client
+    storage_client = storage.Client()
+    
+    ## instance of a bucket in your google cloud storage
+    bucket = storage_client.get_bucket(bucket_name)
+    
+    ## instance of file object
+    blob = bucket.get_blob(file)
+    
+    generation_date = datetime.fromtimestamp(blob.generation/(10**6)).date()
+    print ('Model creation date: {}'.format(generation_date.strftime('%Y/%m/%d')))
+    
+    return generation_date
+
+def get_from_gcloud(file : str, 
+                    bucket_name : str = 'lica-aiml-models'):
+    
+    service_account = '\\secrets.json'
+    
+    ## your service-account credentials as JSON file
+    os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = os.getcwd() + service_account
+    
+    ## instane of the storage client
+    storage_client = storage.Client()
+    
+    ## instance of a bucket in your google cloud storage
+    bucket = storage_client.get_bucket(bucket_name)
+    
+    ## instance of file object
+    blob = bucket.blob(file)
+    
+    with TemporaryFile() as temp_file:
+        #download blob into temp file
+        blob.download_to_file(temp_file)
+        temp_file.seek(0)
+        #load into joblib
+        model = joblib.load(temp_file)
+    
+    return model
 
 def main(platform = None, purpose = None):
     '''
@@ -1446,22 +1699,45 @@ def main(platform = None, purpose = None):
     to reduce runtime on unnecessary functions
     '''
     if (platform is not None) and (purpose is not None):
+        
+        ## get GCP BQ credentials
+        acct = bq_functions.get_acct()
+        
+        ## load BQ client
+        client, credentials = bq_functions.authenticate_bq(acct)
+        project_id = credentials.project_id
+        
         if (platform.upper() == 'GULONG') and (purpose == 'CLEAN'):
             global gulong_makes
             gulong_makes = import_makes('GULONG')
             
         elif (platform.upper() == 'CARMAX') and (purpose == 'CLEAN'):
             global carmax_makes, carmax_models, body_types
+            ## makes
             carmax_makes = import_makes('CARMAX')
-            carmax_models = import_models('CARMAX', 
+            print ('Imported carmax_makes')
+            ## models
+            try:
+                models_table_id = '.'.join([project_id, platform.lower(), 'car_models']) 
+                carmax_models = bq_functions.query_bq(models_table_id,client)
+            except:
+                carmax_models = import_models('CARMAX', 
                                           carmax_makes).replace('', np.NaN)
+            finally:
+                carmax_models = carmax_models[~carmax_models.iloc[:,0].isnull()]
+                carmax_models = carmax_models.drop_duplicates(subset = 'name', 
+                                                              ignore_index = True, 
+                                                              keep = 'first')
+            print ('Imported carmax_models')
+            ## body_type
             body_types = import_body_type('CARMAX')
+            print ('Imported carmax body_types')
         else:
             pass
     else:
         pass
     
-    if all(True for v in ['punctuation', 'colors', 'ph_locations'] if v in globals()):
+    if all(True if v in globals() else False for v in ['punctuation', 'colors', 'ph_locations']):
         pass
     
     else:
