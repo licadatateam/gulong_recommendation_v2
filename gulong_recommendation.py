@@ -126,7 +126,7 @@ def tire_select(df_data):
     gb.configure_selection('single', 
                            use_checkbox=True, 
                            groupSelectsChildren="Group checkbox select children",
-                           pre_selected_rows = [df_display.index[0]]) #Enable multi-row selection
+                           pre_selected_rows = [0]) #Enable multi-row selection
     gb.configure_columns(df_display.columns, width = 100)
     gb.configure_column('sku_name', 
                         headerCheckboxSelection = True,
