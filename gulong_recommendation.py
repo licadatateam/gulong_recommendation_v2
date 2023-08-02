@@ -123,7 +123,10 @@ def tire_select(df_data):
     # table settings
     df_display = df_merged.sort_values(['promo_GP', 'base_GP', 'price_gulong'])
     gb = GridOptionsBuilder.from_dataframe(df_display)
-    gb.configure_selection('single', use_checkbox=True, groupSelectsChildren="Group checkbox select children") #Enable multi-row selection
+    gb.configure_selection('single', 
+                           use_checkbox=True, 
+                           groupSelectsChildren="Group checkbox select children",
+                           preselected_rows = [df_display.index[0]]) #Enable multi-row selection
     gb.configure_columns(df_display.columns, width = 100)
     gb.configure_column('sku_name', 
                         headerCheckboxSelection = True,
