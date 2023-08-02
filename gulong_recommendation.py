@@ -202,7 +202,7 @@ if __name__ == '__main__':
             ])
         
         placeholder = st.sidebar.container()
-        
+        chosen_tab = 'by_size'
         if chosen_tab == 'by_size':
             
             w_list = ['Any Width'] + list(sorted(df.width.unique()))
