@@ -10,7 +10,6 @@ streamlit>=1.20.0
 streamlit-aggrid
 extra_streamlit_components
 matplotlib
-functools
 scikit-learn
 xgboost
 shap
