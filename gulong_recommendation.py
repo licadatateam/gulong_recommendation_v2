@@ -7,6 +7,7 @@ Created on Fri May 19 12:27:14 2023
 
 import pandas as pd
 import numpy as np
+import time
 
 import config_lica as config
 import bq_functions
@@ -65,12 +66,12 @@ def get_gulong_data():
                                                            str(x['speed_rating'])), 
                                                            axis=1)
     df.loc[:, 'base_GP'] = (df.loc[:, 'price_gulong'] - df.loc[:, 'cost']).round(2)
-    
+    df.loc[:, 'base_GP%'] = df.loc[:, 'base_GP']*100/df.loc[:,'price_gulong']
     active_promos = pd.read_csv('http://app.redash.licagroup.ph/api/queries/186/results.csv?api_key=8cDSJOq1Vwsc51HdjvAVQP1eQJePT5toNhFQVyzY',
                                 parse_dates = ['promo_start', 'promo_end']).fillna('')
     
     #df.loc[:, 'promo_GP'] = df.apply(lambda x: config.promo_GP(x['price_gulong'], x['cost'], x['sale_tag'], x['promo_tag']), axis=1)
-    df[['promo_GP', 'promo_id']] = df.apply(lambda x: config.promo_GP(x, active_promos), axis=1, result_type = 'expand')
+    df[['promo_GP', 'promo_GP%', 'promo_id']] = df.apply(lambda x: config.promo_GP(x, active_promos), axis=1, result_type = 'expand')
     df = df[df.name !='-']
     df.sort_values('product_price_date_updated', ascending = False, inplace = True)
     df.drop_duplicates(subset = ['product_id', 'sku_name', 'cost', 'price_gulong', 'supplier'])
@@ -177,7 +178,114 @@ def compare_load_rating(ref, val):
         #     return np.NaN
         else:
             return np.NaN
-          
+
+def get_compatible(df, 
+                   selected_row, 
+                   price_range, 
+                   with_load_rating = False) -> pd.DataFrame:
+    
+    df_temp = df.copy()
+    
+    price = selected_row['price_gulong'].values[0]
+    load_rating = selected_row['load_rating'].values[0]
+    OD = selected_row['overall_diameter'].values[0]
+    df_temp.loc[:, 'od_diff'] = df_temp.overall_diameter.apply(lambda x: round(abs((x - OD)*100/OD), 2))
+    
+
+    # 1 : lower price, higher GP, any dims, sorted by od_diff
+    compatible_1 = df_temp[~df_temp.index.isin([selected_row.index]) & \
+                           df_temp.od_diff.between(0, 3) & \
+                           df_temp.price_gulong.between(price*(1.0-price_range/100.0), 
+                                                        price) & \
+                           (df_temp.promo_GP >= selected_row.promo_GP.values[0])].sort_values('od_diff', 
+                                                                                    ascending = True)
+    
+    # 2 : any price, higher GP, any dims, sorted by od_diff
+    compatible_2 = df_temp[~df_temp.index.isin([selected_row.index]) & \
+                           df_temp.od_diff.between(0, 3) & \
+                           df_temp.price_gulong.between(price*(1.0-price_range/100.0), 
+                                                        price*(1.0+price_range/100.0))].sort_values('od_diff', 
+                                                                            ascending = True)
+    
+    # 3 : lower price, higher GP, diff dims, sorted by od_diff
+    compatible_3 = df_temp[~df_temp.index.isin([selected_row.index]) & \
+                           df_temp.od_diff.between(0.01, 3) & \
+                           df_temp.price_gulong.between(price*(1.0-price_range/100.0), 
+                                                        price)].sort_values('od_diff', 
+                                                                            ascending = True)                                                                        
+     
+     # 4 : any price, higher GP, diff dims, sorted by od_diff    
+    compatible_4 = df_temp[~df_temp.index.isin([selected_row.index]) & \
+                            df_temp.od_diff.between(0.01, 3) & \
+                            df_temp.price_gulong.between(price*(1.0-price_range/100.0), 
+                                                         price*(1.0+price_range/100.0))].sort_values('od_diff', 
+                                                                             ascending = True)                                                                        
+    
+    compatible = pd.concat([compatible_1, 
+                            compatible_2, 
+                            compatible_3, 
+                            compatible_4], 
+                           axis=0).sort_values(['price_gulong', 'promo_GP', 'od_diff'],
+                                               ascending = [True, False, True])\
+                                               .drop_duplicates(subset = 'product_id',
+                                                                keep = 'first')
+                                                                                                     
+    if with_load_rating:
+        try:
+            compatible = compatible[compatible.load_rating.apply(lambda x: compare_load_rating(load_rating, x))]
+        
+        except:
+            pass
+    
+    return compatible.head(5)
+
+
+def optimal_price_range(df : pd.DataFrame, 
+                        test_size : int = None, 
+                        price_ranges : list = None,
+                        with_load_rating : bool = True) -> [dict, dict]:
+    # time process
+    start_time = time.time()
+    # preserve original dataframe
+    df_temp = df.copy().sort_values('promo_GP', ascending = False)\
+        .drop_duplicates(subset = 'product_id', keep = 'first')
+    
+    # use smaller sample set if need to test function
+    if test_size is not None:
+        df_iter = df_temp.copy()
+    else:
+        df_iter = df_temp.head(test_size)
+    
+    # price ranges (in percent) to process
+    if price_ranges is not None:
+        pass
+    else:
+        price_ranges = [35, 40, 45, 50]
+
+    
+    # iterate over all rows
+    recommended_stats = {}
+    for ndx, row in df_iter.iterrows():
+        recommended_stats[row.to_frame().T['sku_name'].values[0]] = {}
+        for price_range in price_ranges:
+            print ('Calculating {}% price range for product {}/{}'.format(price_range,
+                                                                          df_iter.index.get_loc(ndx)+1, 
+                                                                          len(df_iter)))
+            # calculate compatible recommended items
+            compatible = get_compatible(df_temp, row.to_frame().T, 
+                                        price_range, with_load_rating)
+            # store number of compatible items
+            recommended_stats[row.to_frame().T['sku_name'].values[0]][f'{price_range}%'] = len(compatible)
+    
+    # calcualate price range stats
+    price_range_stats = {}
+    for price_range in price_ranges:
+        num_series = pd.Series([recommended_stats[sku][f'{price_range}%'] for sku in recommended_stats.keys()])
+        price_range_stats[f'{price_range}%'] = {'stats_summary': num_series.describe(),
+                                                'value_counts' : num_series.value_counts().sort_index()}
+            
+    print ('Total run time: {:.2f} s'.format(time.time() - start_time))
+    return price_range_stats, recommended_stats
 
 if __name__ == '__main__':
     
@@ -202,7 +310,9 @@ if __name__ == '__main__':
             ])
         
         placeholder = st.sidebar.container()
+        # set default tab
         chosen_tab = 'by_size'
+        
         if chosen_tab == 'by_size':
             
             w_list = ['Any Width'] + list(sorted(df.width.unique()))
@@ -307,21 +417,9 @@ if __name__ == '__main__':
                                       max_value = 100.0,
                                       value = 10.0, 
                                       step = 0.5)
-        
-        price = tire_selected.price_gulong.values[0]
-        
-        try:
-            load_rating = tire_selected['load_rating'].values[0]
-            compatible = df_temp[~df_temp.index.isin(list(tire_selected.index)) & (df_temp.od_diff.between(0.01, 3)) & \
-                                 df_temp.load_rating.apply(lambda x: compare_load_rating(load_rating, x)) & \
-                                df_temp.price_gulong.between(price*(1.0-price_range/100.0), price*(1.0+price_range/100.0)) & \
-                                 ((df_temp.promo_GP >= tire_selected.promo_GP.max()) & \
-                                  (df_temp.base_GP >= tire_selected.base_GP.max()))]
-        except:
-            compatible = df_temp[~df_temp.index.isin(list(tire_selected.index)) & (df_temp.od_diff.between(0.01, 3)) & \
-                                 ((df_temp.promo_GP >= tire_selected.promo_GP.max()) & \
-                                  df_temp.price_gulong.between(price*(1.0-price_range/100.0), price*(1.0+price_range/100.0)) & \
-                                  (df_temp.base_GP >= tire_selected.base_GP.max()))]
+
+        compatible = get_compatible(df_temp, tire_selected, price_range = price_range,
+                                    with_load_rating = False)
         
         ## check if compatible is not empty
         if len(compatible):
