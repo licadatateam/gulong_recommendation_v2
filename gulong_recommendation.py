@@ -416,7 +416,7 @@ if __name__ == '__main__':
                                       min_value = 0.0, 
                                       max_value = 100.0,
                                       value = 25.0, 
-                                      step = 1)
+                                      step = 1.0)
 
         compatible = get_compatible(df_temp, tire_selected, price_range = price_range,
                                     with_load_rating = False)
