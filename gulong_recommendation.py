@@ -239,7 +239,6 @@ def get_compatible(df,
     
     return compatible.head(5)
 
-
 def optimal_price_range(df : pd.DataFrame, 
                         test_size : int = None, 
                         price_ranges : list = None,
@@ -436,8 +435,8 @@ if __name__ == '__main__':
                 if len(compatible) == 0:
                     st.error('No recommended tires found.')
                 else:
-                    st.dataframe(compatible[display_cols + ['od_diff']].sort_values(['od_diff', 'base_GP', 'promo_GP', 'price_gulong'],
-                                                                                    ascending = [True, False, False, True]))
+                    st.dataframe(compatible[display_cols + ['od_diff']].sort_values(['price_gulong', 'promo_GP','od_diff'],
+                                                                                    ascending = [True, False, True]))
             else:
                 pass
     else:
