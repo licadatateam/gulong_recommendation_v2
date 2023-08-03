@@ -1317,19 +1317,28 @@ def combine_sku(make, w, ar, d, model, load, speed):
 def promo_GP(row, active_promos):
 
     ## TODO : Create func to identify type of calculation for GP       
-    promo_type = {0 : lambda p, c: (p*0.97 - c)*4, #clearance/sale
-                  1 : lambda p, c : p - c, #WHEELALIGNMENT
-                  2 : lambda p, c : 3*p + 33 - c * 4, #33 PHP
-                  3 : lambda p, c : p - c, #'SPARE TIRE'
-                  4 : lambda p, c : p * 3 - c * 4, #'3+1',
-                  5 : lambda p, c : (p - c) * 4 - 1000, #'1000OFF',
-                  6 : lambda p, c : p * 3.5 - c * 4, #'50%OFF',
-                  7 : lambda p, c : 3*p + 3 - c * 4#'3 PHP'
+    promo_type = {-1: {'GP'  : lambda p, c: p - c,
+                       'GP%' : lambda p, c: (p - c)*100/p}, 
+                  0 : {'GP'  : lambda p, c: (p*0.97 - c)*4,
+                       'GP%' : lambda p, c: (p*0.97 - c)*4*100/(p*0.97*4)}, #clearance/sale
+                  1 : {'GP'  : lambda p, c : p - c,
+                       'GP%' : lambda p, c : (p - c)*100/p}, #WHEELALIGNMENT
+                  2 : {'GP'  : lambda p, c : 3*p + 33 - c * 4,
+                       'GP%' : lambda p, c : (3*p + 33 - c * 4)*100/(3*p + 33)}, #33 PHP
+                  3 : {'GP'  : lambda p, c : p - c,
+                       'GP%' : lambda p, c : (p - c)*100/p}, #'SPARE TIRE'
+                  4 : {'GP'  : lambda p, c : p * 3 - c * 4,
+                       'GP%' : lambda p, c : (p * 3 - c * 4)*100/(p*3)}, #'3+1',
+                  5 : {'GP'  : lambda p, c : (p - c) * 4 - 1000,
+                       'GP%' : lambda p, c : ((p - c) * 4 - 1000)*100/(p*4 - 1000)},#'1000OFF',
+                  6 : {'GP'  : lambda p, c : p * 3.5 - c * 4,
+                       'GP%' : lambda p, c : (p * 3.5 - c * 4)*100/(p * 3.5)},#50%OFF',
+                  7 : {'GP'  : lambda p, c : 3*p + 3 - c * 4,
+                       'GP%' : lambda p, c : (3*p + 3 - c * 4)*100/(p*3 + 3)}#'3 PHP'
                   }
     
     # sale tag : buy 4 tires 3% off per tire
     if (row['sale_tag'] == 1) and (row['promo_tag'] == 0):
-        gp = (row['price_gulong'] * 0.97 - row['cost']) * 4
         promo_id = 0
         
     elif (row['sale_tag'] == 0) and (row['promo_tag'] == 1):
@@ -1348,18 +1357,14 @@ def promo_GP(row, active_promos):
             brand_match = min(brands_match, key = len)
             promo_id = active_promos[active_promos['brand']==brand_match]['promo_duration_id'].iloc[0]
         except:
-            promo_id = np.NaN
+            promo_id = -1
 
-        
-        if pd.notna(promo_id):
-            gp = promo_type[promo_id](row['price_gulong'], row['cost'])
-        else:
-            gp = row['price_gulong'] - row['cost']
     else:
-        gp = (row['price_gulong'] - row['cost'])
         promo_id = -1
-        
-    return round(gp, 2), promo_id
+    
+    gp = promo_type[promo_id]['GP'](row['price_gulong'], row['cost'])
+    gp_pct = promo_type[promo_id]['GP%'](row['price_gulong'], row['cost'])
+    return round(gp, 2), round(gp_pct, 2), promo_id
 
 def calc_overall_diameter(specs):
     '''
@@ -1550,9 +1555,15 @@ def clean_df(df, platform = 'CARMAX'):
                                                                str(x['speed_rating'])), 
                                                                axis=1)
         print(f"Clalculating GP: {datetime.now().time().strftime('%H:%M:%S')}")
+        active_promos = pd.read_csv('http://app.redash.licagroup.ph/api/queries/186/results.csv?api_key=8cDSJOq1Vwsc51HdjvAVQP1eQJePT5toNhFQVyzY',
+                                    parse_dates = ['promo_start', 'promo_end']).fillna('')
+        
         data.loc[:, 'base_GP'] = (data.loc[:, 'price_gulong'] - data.loc[:, 'cost']).round(2)
-        data.loc[:, 'promo_GP'] = data.apply(lambda x: promo_GP(x['price_gulong'], x['cost'], x['sale_tag'], x['promo_tag']), axis=1)
-    
+        data.loc[:, 'base_GP%'] = data.loc[:, 'base_GP']*100/data.loc[:,'price_gulong']
+        data[['promo_GP', 'promo_GP%', 'promo_id']] = data.apply(lambda x: promo_GP(x, active_promos), 
+                                                    axis=1, 
+                                                    result_type = 'expand')
+        
     return data
 
 def prep_competitor_data(platform = 'CARMAX'):
