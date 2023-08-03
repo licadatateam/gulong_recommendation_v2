@@ -415,8 +415,8 @@ if __name__ == '__main__':
         price_range = st.number_input('% difference of price from selected tire',
                                       min_value = 0.0, 
                                       max_value = 100.0,
-                                      value = 10.0, 
-                                      step = 0.5)
+                                      value = 25.0, 
+                                      step = 1)
 
         compatible = get_compatible(df_temp, tire_selected, price_range = price_range,
                                     with_load_rating = False)
