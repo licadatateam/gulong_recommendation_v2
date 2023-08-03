@@ -203,8 +203,8 @@ def get_compatible(df,
     # 2 : any price, higher GP, any dims, sorted by od_diff
     compatible_2 = df_temp[~df_temp.index.isin([selected_row.index]) & \
                            df_temp.od_diff.between(0, 3) & \
-                           df_temp.price_gulong.between(price*(1.0-price_range/100.0), 
-                                                        price*(1.0+price_range/100.0))].sort_values('od_diff', 
+                           df_temp.price_gulong.between(price*(1.0-price_range*0.5/100.0), 
+                                                        price*(1.0+price_range*0.5/100.0))].sort_values('od_diff', 
                                                                             ascending = True)
     
     # 3 : lower price, higher GP, diff dims, sorted by od_diff
@@ -217,16 +217,16 @@ def get_compatible(df,
      # 4 : any price, higher GP, diff dims, sorted by od_diff    
     compatible_4 = df_temp[~df_temp.index.isin([selected_row.index]) & \
                             df_temp.od_diff.between(0.01, 3) & \
-                            df_temp.price_gulong.between(price*(1.0-price_range/100.0), 
-                                                         price*(1.0+price_range/100.0))].sort_values('od_diff', 
+                            df_temp.price_gulong.between(price*(1.0-price_range*0.5/100.0), 
+                                                         price*(1.0+price_range*0.5/100.0))].sort_values('od_diff', 
                                                                              ascending = True)                                                                        
     
     compatible = pd.concat([compatible_1, 
                             compatible_2, 
                             compatible_3, 
                             compatible_4], 
-                           axis=0).sort_values(['price_gulong', 'promo_GP', 'od_diff'],
-                                               ascending = [True, False, True])\
+                           axis=0).sort_values(['promo_GP', 'price_gulong', 'od_diff'],
+                                               ascending = [False, True, True])\
                                                .drop_duplicates(subset = 'product_id',
                                                                 keep = 'first')
                                                                                                      
@@ -245,7 +245,7 @@ def optimal_price_range(df : pd.DataFrame,
                         with_load_rating : bool = True) -> [dict, dict]:
     # time process
     start_time = time.time()
-    # preserve original dataframe
+    # preserve original dataframe & remove duplicates
     df_temp = df.copy().sort_values('promo_GP', ascending = False)\
         .drop_duplicates(subset = 'product_id', keep = 'first')
     
