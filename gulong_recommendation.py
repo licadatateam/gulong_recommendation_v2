@@ -191,51 +191,58 @@ def get_compatible(df,
     OD = selected_row['overall_diameter'].values[0]
     df_temp.loc[:, 'od_diff'] = df_temp.overall_diameter.apply(lambda x: round(abs((x - OD)*100/OD), 2))
     
-
-    # 1 : lower price, higher GP, any dims, sorted by od_diff
-    compatible_1 = df_temp[~df_temp.index.isin([selected_row.index]) & \
-                           df_temp.od_diff.between(0, 3) & \
-                           df_temp.price_gulong.between(price*(1.0-price_range/100.0), 
-                                                        price) & \
-                           (df_temp.promo_GP >= selected_row.promo_GP.values[0])].sort_values('od_diff', 
-                                                                                    ascending = True)
-    
-    # 2 : any price, higher GP, any dims, sorted by od_diff
-    compatible_2 = df_temp[~df_temp.index.isin([selected_row.index]) & \
-                           df_temp.od_diff.between(0, 3) & \
-                           df_temp.price_gulong.between(price*(1.0-price_range*0.5/100.0), 
-                                                        price*(1.0+price_range*0.5/100.0))].sort_values('od_diff', 
-                                                                            ascending = True)
-    
-    # 3 : lower price, higher GP, diff dims, sorted by od_diff
-    compatible_3 = df_temp[~df_temp.index.isin([selected_row.index]) & \
-                           df_temp.od_diff.between(0.01, 3) & \
-                           df_temp.price_gulong.between(price*(1.0-price_range/100.0), 
-                                                        price)].sort_values('od_diff', 
-                                                                            ascending = True)                                                                        
-     
-     # 4 : any price, higher GP, diff dims, sorted by od_diff    
-    compatible_4 = df_temp[~df_temp.index.isin([selected_row.index]) & \
-                            df_temp.od_diff.between(0.01, 3) & \
-                            df_temp.price_gulong.between(price*(1.0-price_range*0.5/100.0), 
-                                                         price*(1.0+price_range*0.5/100.0))].sort_values('od_diff', 
-                                                                             ascending = True)                                                                        
-    
-    compatible = pd.concat([compatible_1, 
-                            compatible_2, 
-                            compatible_3, 
-                            compatible_4], 
-                           axis=0).sort_values(['promo_GP', 'price_gulong', 'od_diff'],
-                                               ascending = [False, True, True])\
-                                               .drop_duplicates(subset = 'product_id',
-                                                                keep = 'first')
-                                                                                                     
-    if with_load_rating:
-        try:
-            compatible = compatible[compatible.load_rating.apply(lambda x: compare_load_rating(load_rating, x))]
+    no_matches_id = [6249, 6250, 6257, 6258, 6259,  6260]
+    if ~selected_row.product_id.isin(no_matches_id):
+        # 1 : lower price, higher GP, any dims, sorted by od_diff
+        compatible_1 = df_temp[~df_temp.index.isin([selected_row.index]) & \
+                               df_temp.od_diff.between(0, 3) & \
+                               df_temp.price_gulong.between(price*(1.0-price_range/100.0), 
+                                                            price) & \
+                               (df_temp.promo_GP >= selected_row.promo_GP.values[0])].sort_values('od_diff', 
+                                                                                        ascending = True)
         
-        except:
-            pass
+        # 2 : any price, higher GP, any dims, sorted by od_diff
+        compatible_2 = df_temp[~df_temp.index.isin([selected_row.index]) & \
+                               df_temp.od_diff.between(0, 3) & \
+                               df_temp.price_gulong.between(price*(1.0-price_range*0.5/100.0), 
+                                                            price*(1.0+price_range*0.5/100.0))].sort_values('od_diff', 
+                                                                                ascending = True)
+        
+        # 3 : lower price, higher GP, diff dims, sorted by od_diff
+        compatible_3 = df_temp[~df_temp.index.isin([selected_row.index]) & \
+                               df_temp.od_diff.between(0.01, 3) & \
+                               df_temp.price_gulong.between(price*(1.0-price_range/100.0), 
+                                                            price)].sort_values('od_diff', 
+                                                                                ascending = True)                                                                        
+         
+         # 4 : any price, higher GP, diff dims, sorted by od_diff    
+        compatible_4 = df_temp[~df_temp.index.isin([selected_row.index]) & \
+                                df_temp.od_diff.between(0.01, 3) & \
+                                df_temp.price_gulong.between(price*(1.0-price_range*0.5/100.0), 
+                                                             price*(1.0+price_range*0.5/100.0))].sort_values('od_diff', 
+                                                                                 ascending = True)                                                                        
+        
+        compatible = pd.concat([compatible_1, 
+                                compatible_2, 
+                                compatible_3, 
+                                compatible_4], 
+                               axis=0)
+                                                                                                     
+        if with_load_rating:
+            try:
+                compatible = compatible[compatible.load_rating.apply(lambda x: compare_load_rating(load_rating, x))]
+            
+            except:
+                pass
+    else:
+        compatible = df_temp[df_temp.product_id.isin(no_matches_id) & \
+                             (df_temp.product_id != selected_row.product_id.values[0])]
+    
+    # sort and cleanup
+    compatible = compatible.sort_values(['promo_GP', 'price_gulong', 'od_diff'],
+                        ascending = [False, True, True])\
+                        .drop_duplicates(subset = 'product_id',
+                                         keep = 'first')
     
     return compatible.head(5)
 
