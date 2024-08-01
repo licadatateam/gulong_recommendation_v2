@@ -141,7 +141,7 @@ def get_best_match(query, match_list):
     
     # if no matches, return NaN
     if len(match_list) == 0:
-        return np.NaN
+        return np.nan
     # if only one match, return match
     elif len(match_list) == 1:
         return match_list[0][0]
@@ -156,7 +156,7 @@ def get_best_match(query, match_list):
         # if no match score is high enough, get match with lowest lev dist
         else:
             min_lev_dist = 200
-            best_match = np.NaN
+            best_match = np.nan
             for m in matches:
                 lev_d = lev_dist(query, m)
                 if lev_d < min_lev_dist:
@@ -248,7 +248,7 @@ def clean_make(x, makes):
             
             except:
                 if 'HTTPS://' in x:
-                    best_match = np.NaN
+                    best_match = np.nan
                 else:
                     best_match = x
             
@@ -256,7 +256,7 @@ def clean_make(x, makes):
                 return best_match
         
     else:
-        return np.NaN
+        return np.nan
 
 def import_models(platform, makes = None):
     '''
@@ -416,7 +416,7 @@ def clean_model(model, makes, models):
                 
             except:
                 if 'HTTPS://' in model:
-                    best_match = np.NaN
+                    best_match = np.nan
                 else:
                     best_match = model
             
@@ -424,7 +424,7 @@ def clean_model(model, makes, models):
                 return best_match
         
     else:
-        return np.NaN
+        return np.nan
 
 ## START OF CARMAX FUNCTIONS ================================================##
 
@@ -494,7 +494,7 @@ def clean_body_type(x, body_types):
                 return best_match        
         
     else:
-        return np.NaN
+        return np.nan
 
 def import_colors():
     '''
@@ -528,7 +528,7 @@ def clean_color(c, colors):
         best_match = get_best_match(c, matches)
         return best_match
     else:
-        return np.NaN
+        return np.nan
 
 def import_locations():
     '''
@@ -547,7 +547,7 @@ def clean_location(loc, ph_loc, prov = None):
     
     
     if pd.isna(loc):
-        return np.NaN, np.NaN, np.NaN
+        return np.nan, np.nan, np.nan
     else:
         loc = loc.title().strip()
         if ('City' in loc.split(', ')[0]) and (loc.split(', ')[0] in ph_loc[ph_loc.city.str.contains('City')]['city'].unique()):
@@ -570,7 +570,7 @@ def clean_location(loc, ph_loc, prov = None):
             if len(city_match_list) > 0:
                 city_match = get_best_match(loc, city_match_list)
             else:
-                city_match = np.NaN
+                city_match = np.nan
         
         if pd.notna(city_match):
             if prov is not None:
@@ -603,7 +603,7 @@ def clean_address(address, lev_dist_tol = 3):
     Cleans address string of carmax financing data with help from levenshtein distance calc
     '''
     if pd.isna(address):
-        return np.NaN
+        return np.nan
     else:
         # baseline correction
         address = address.upper().strip()
@@ -632,12 +632,12 @@ def clean_address(address, lev_dist_tol = 3):
                     else:
                         return address
 
-def clean_year(x: str) -> (str, np.NaN):
+def clean_year(x: str) -> (str, np.nan):
     '''
     Finds the year in a string value
     '''
     if pd.isna(x):
-        return np.NaN
+        return np.nan
     else:
         x = str(x).strip().upper()
         search = re.search('(19|20)[0-9]{2}', x)
@@ -666,7 +666,7 @@ def clean_price(x):
     123456.0
     '''
     if pd.isna(x):
-        return np.NaN
+        return np.nan
     else:
         # baseline correct
         x = str(x).upper().strip()
@@ -685,7 +685,7 @@ def clean_price(x):
                 return float(''.join(re.findall('[0-9]', x)))
             # return cleaned string
             except:
-                return np.NaN
+                return np.nan
 
 def clean_mileage(x, description = None):
     '''
@@ -711,9 +711,9 @@ def clean_mileage(x, description = None):
                 else:
                     return float(''.join(r[0].strip().split(',')))
             else:
-                return np.NaN
+                return np.nan
         else:
-            return np.NaN
+            return np.nan
     else:
         # baseline correction
         x = str(x).upper().strip()
@@ -735,7 +735,7 @@ def clean_mileage(x, description = None):
                         else:
                             return float(''.join(r[0].strip().split(',')))
                     else:
-                        return np.NaN
+                        return np.nan
                 else:
                     raise Exception
         # unexpected result
@@ -745,7 +745,7 @@ def clean_mileage(x, description = None):
                 return float(''.join(re.findall('[0-9]', x)))
             # return NaN
             except:
-                return np.NaN
+                return np.nan
 
 def clean_fuel_type(x, description = None):
     '''
@@ -789,9 +789,9 @@ def clean_fuel_type(x, description = None):
             if (description is not None):
                 return regex_fuel(description)
             else:
-                raise np.NaN
+                raise np.nan
         except:
-            return np.NaN
+            return np.nan
     else:
         x = str(x).upper().strip()
         try:
@@ -854,7 +854,7 @@ def clean_transmission(x, variant = None, description = None):
             try:
                 return regex_trans(description)
             except:
-                return np.NaN
+                return np.nan
     # value is not NaN
     else:
         # baseline correct
@@ -898,9 +898,9 @@ def clean_engine(x, description = None):
             if (match := re.search('(?<![0-9])[0-9]\.[0-9]((?<=L)|(?<=-LITER))?', x)):
                 return f'{float(match[0].strip())}L'
             else:
-                return np.NaN
+                return np.nan
         else:
-            return np.NaN
+            return np.nan
         
     else:
         # baseline correction
@@ -913,16 +913,16 @@ def clean_engine(x, description = None):
                 if (match := re.search('(?<![0-9])[0-9]\.[0-9]((?<=L)|(?<=-LITER))?', x)):
                     return f'{float(match[0].strip())}L'
                 else:
-                    return np.NaN
+                    return np.nan
             else:
-                return np.NaN
+                return np.nan
             
 
 def clean_engine_disp(x):
     if pd.notna(x):
         return '{:.1f}'.format(round(float(x)/1000, 2)) + 'L'
     else:
-        return np.NaN
+        return np.nan
 
 ## END OF CARMAX FUNCTIONS ==================================================##
 
@@ -1056,7 +1056,7 @@ def fix_names(sku_name, comp=None):
                         }
     
     if pd.isna(sku_name) or (sku_name is None):
-        return np.NaN
+        return np.nan
     
     else:
         # uppercase and remove double spaces
@@ -1135,7 +1135,7 @@ def clean_width(w, model = None):
     '8.25'
     >>> clean_width('P265.5')
     'P265.5'
-    >>> clean_width(np.NaN)
+    >>> clean_width(np.nan)
     nan
     
     '''
@@ -1149,16 +1149,16 @@ def clean_width(w, model = None):
             prefix = w.split(num_str)[0]
             return prefix + num
         else:
-            return np.NaN
+            return np.nan
     else:
         if model is None:
-            return np.NaN
+            return np.nan
         else:
             try:
                 width = model.split('/')[0].split(' ')[-1].strip().upper()
                 return clean_width(width)   
             except:
-                return np.NaN
+                return np.nan
 
 def clean_diameter(d):
     '''
@@ -1181,7 +1181,7 @@ def clean_diameter(d):
     'R22.5'
     >>> clean_diameter('15')
     'R15'
-    >>> clean_diameter(np.NaN)
+    >>> clean_diameter(np.nan)
     nan
     
     '''
@@ -1194,7 +1194,7 @@ def clean_diameter(d):
             suffix = num_suffix[0].split(num_str)[-1]
             return f'R{num}{suffix}'
     else:
-        return np.NaN
+        return np.nan
 
 def clean_aspect_ratio(ar, model = None):
     
@@ -1220,7 +1220,7 @@ def clean_aspect_ratio(ar, model = None):
     '9.5'
     >>> clean_aspect_ratio('14.50')
     '14.5'
-    >>> clean_aspect_ratio(np.NaN)
+    >>> clean_aspect_ratio(np.nan)
     'R'
     
     '''
@@ -1250,7 +1250,7 @@ def clean_aspect_ratio(ar, model = None):
             return str(remove_trailing_zero(Decimal(str(ar))))
         
         else:
-            return np.NaN
+            return np.nan
         
     else:
         return 'R'
@@ -1293,11 +1293,11 @@ def clean_speed_rating(sp):
         elif sp == '0':
             return 'B'
         elif sp == '-':
-            return np.NaN
+            return np.nan
         else:
             return sp
     else:
-        return np.NaN
+        return np.nan
 
 def combine_sku(make, w, ar, d, model, load, speed):
     '''
@@ -1309,7 +1309,7 @@ def combine_sku(make, w, ar, d, model, load, speed):
     '''
     specs = combine_specs(w, ar, d, mode = 'SKU')
     
-    if (load in ['nan', np.NaN, None, '-', '']) or (speed in ['nan', np.NaN, None, '', '-']):
+    if (load in ['nan', np.nan, None, '-', '']) or (speed in ['nan', np.nan, None, '', '-']):
         return ' '.join([make, specs, model])
     else:
         return ' '.join([make, specs, model, load + speed])
@@ -1393,7 +1393,7 @@ def calc_overall_diameter(specs):
         return round((w + 0.35)*2+d, 2)
     
     elif 10 < w < 25:
-        return np.NaN
+        return np.nan
     
     elif 27 <= w <= 60:
         return round(w, 1)
@@ -1402,7 +1402,7 @@ def calc_overall_diameter(specs):
         return round((w*ar*2)/25.4 + d, 2)
     
     else:
-        return np.NaN
+        return np.nan
 
 def get_car_compatible():
     
@@ -1499,13 +1499,13 @@ def clean_df(df, platform = 'CARMAX'):
 
         print(f"Cleaning body_type: {datetime.now().time().strftime('%H:%M:%S')}")
         def get_body_type(make : str, 
-                          model : str) -> [str, np.NaN]:
+                          model : str) -> [str, np.nan]:
             #print ('make: {0}, model: {1}'.format(make, model))
             sim = data[(data.make == make) & (data.model == model)]
             try:
                 return sim['body_type'].mode().iloc[0]
             except:
-                return np.NaN
+                return np.nan
         
         #data.loc[:, 'body_type'] = data.apply(lambda x: get_body_type(x['make'], x['model']), axis=1)
         data.loc[:, 'body_type'] = data.apply(lambda x: clean_body_type(x['body_type'], body_types), axis=1)
@@ -1733,7 +1733,7 @@ def main(platform = None, purpose = None):
                 carmax_models = bq_functions.query_bq(models_table_id,client)
             except:
                 carmax_models = import_models('CARMAX', 
-                                          carmax_makes).replace('', np.NaN)
+                                          carmax_makes).replace('', np.nan)
             finally:
                 carmax_models = carmax_models[~carmax_models.iloc[:,0].isnull()]
                 carmax_models = carmax_models.drop_duplicates(subset = 'name', 
