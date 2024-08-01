@@ -29,7 +29,7 @@ def get_gulong_data():
     '''
     #df = pd.read_csv('http://app.redash.licagroup.ph/api/queries/130/results.csv?api_key=JFYeyFN7WwoJbUqf8eyS0388PFE7AiG1JWa6y9Zp')
     # http://app.redash.licagroup.ph/queries/131
-    url1 =  "http://app.redash.licagroup.ph/api/queries/131/results.csv?api_key=BdUhcTVmwDEqP5aYKpSolS5ApT2lig4hpdDqIPJq"
+    url1 =  "http://app.redash.licagroup.ph/api/queries/131/results.csv?api_key=FqpOO9ePYQhAXrtdqsXSt2ZahnUZ2XCh3ooFogzY"
 
     df = pd.read_csv(url1, parse_dates = ['supplier_price_date_updated','product_price_date_updated'])
     #df_data.loc[df_data['sale_tag']==0,'promo'] =df_data.loc[df_data['sale_tag']==0,'srp']
