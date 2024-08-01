@@ -164,7 +164,7 @@ def tire_select(df_data):
 
 def compare_load_rating(ref, val):
     if pd.isna(ref) or (ref is None):
-        return np.NaN
+        return np.nan
     else:
         ref_list = str(ref).split('/')
         val_list = str(val).split('/')
@@ -175,9 +175,9 @@ def compare_load_rating(ref, val):
             else:
                 return False
         # elif all(r.isalpha() for r in ref_list) or all(v.isalpha() for v in val_list):
-        #     return np.NaN
+        #     return np.nan
         else:
-            return np.NaN
+            return np.nan
 
 def get_compatible(df, 
                    selected_row, 
